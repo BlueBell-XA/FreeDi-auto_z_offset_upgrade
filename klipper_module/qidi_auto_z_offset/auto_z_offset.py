@@ -7,8 +7,6 @@
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
-from operator import neg
-
 from . import probe
 from . import manual_probe
 
@@ -72,7 +70,6 @@ def _get_probe_xy_offsets(probe_obj):
 # ---------------------------------------------------------------------------
 # Main implementation - Modified from Joe's original source: https://github.com/frap129/qidi_auto_z_offset/blob/main/auto_z_offset.py
 # ---------------------------------------------------------------------------
-# TODO: Check and cleanup
 class AutoZOffsetCommandHelper:
     """Auto Z-Offset G-code commands for probing and calibration."""
     def __init__(self, config, mcu_probe):
@@ -92,6 +89,22 @@ class AutoZOffsetCommandHelper:
         # Probe command data
         self.last_probe_position = self._make_coord(0., 0., 0.)
         self.last_z_result = 0.0
+
+        # Steps we need to take to calculate the true Z offset:
+        # 1. Home all axes normally. Whether done with inductive probe or bed sensor, the end result is the same
+        #    (within the noise of the probes), provided Homing isn't redone during calibration.
+        # 2. Probe Z at a given XY with bed sensor, and record the probe result.
+        #    An offset (default 0.2mm) is added to the bed sensor probe result to ensure the nozzle is slightly above the bed.
+        # 3. Move the toolhead so that the inductive probe is at the same XY position
+        # 4. Probe Z with at same XY using the inductive probe, and record the probe result
+        # 5. Subtract the inductive probe result from the bed sensor probe result to get the 
+        #    true Z offset of the nozzle from the bed plane.
+        # 6. Average multiple runs of the above to reduce noise, and save the result to config 
+        #    for future application as a gcode offset. This resulting value should be inverted for Klipper's gcode offset feature.
+
+        # Note: The 'probe result' is the the point at which the probe triggers.
+        #       The value of this point is calculated as the kinematic Z height of the toolhead 
+        #       'minus' the z_offset value of the [probe] config section.
 
         # Register G-code commands
         self.gcode.register_command(
@@ -182,10 +195,9 @@ class AutoZOffsetCommandHelper:
         """Probe Z-height at current XY position using the bed sensors"""
         pos = probe.run_single_probe(self.mcu_probe, gcmd)
         x, y, z = _get_pos_xyz(pos)
-        self.last_z_result = neg(z) + self.z_offset # TODO: Investigate this math to understand why.
+        self.last_z_result = z + self.z_offset
         self.last_probe_position = self._make_coord(x, y, z)
         gcmd.respond_info("%s: Bed sensor measured offset: z=%.6f" % (self.name, self.last_z_result))
-        gcmd.respond_info("%s: normal Z, no negating: z=%.6f" % (self.name, z))
 
     def cmd_AUTO_Z_HOME_Z(self, gcmd):
         """Home Z using the bed sensors as an endstop, then apply z_offset config to set the new Z=0 plane."""
@@ -199,11 +211,12 @@ class AutoZOffsetCommandHelper:
         self._lift_probe(gcmd)
 
     def cmd_AUTO_Z_MEASURE_OFFSET(self, gcmd):
-        #TODO: The first found of probing with bed sensors seems wrong because the bed was first leveled with inductive probe. throws off data when calibrating.
-        # Use bed sensors to find correct z origin
-        self.cmd_AUTO_Z_HOME_Z(gcmd)
+        # Use bed sensors to find Z at bed center, with small z_offset added to ensure nozzle is above bed.
+        self._move_to_center()
+        self.cmd_AUTO_Z_PROBE(gcmd)
+        self._lift_probe(gcmd)
 
-        # Move inductive prove to position previously proved
+        # Move inductive probe to position previously proved
         inductive_probe = self.printer.lookup_object("probe")
         toolhead = self.printer.lookup_object("toolhead")
         coord = toolhead.get_position()
@@ -212,11 +225,10 @@ class AutoZOffsetCommandHelper:
         coord[1] = self.bed_center_y - y_offset
         self._move(coord, self.xy_move_speed)
 
-        # Find new Z when inductive probe triggers, and calculate true offset from bed sensor Z
+        # Find Z at same XY with inductive probe, and calculate true Z offset by subtracting from bed sensor result
         position = probe.run_single_probe(inductive_probe, gcmd)
-        inductive_delta_from_z_home = _get_pos_z(position) # This is delta as system was previously homed with bed sensor
-        true_offset = self.last_z_result - inductive_delta_from_z_home  # Subtract inductive probe measurement from bed sensor measurement
-        gcmd.respond_info("%s: Inductive probe measured delta: z=%.6f" % (self.name, inductive_delta_from_z_home))
+        inductive_probe_result_z = _get_pos_z(position)
+        true_offset = self.last_z_result - inductive_probe_result_z  # Subtract inductive probe measurement from bed sensor measurement
         gcmd.respond_info("%s: Calculated true nozzle offset: z=%.6f" % (self.name, true_offset))
         self._lift_probe(gcmd)
         return true_offset
@@ -230,7 +242,8 @@ class AutoZOffsetCommandHelper:
         for _ in range(self.offset_samples):
             offset_total += self.cmd_AUTO_Z_MEASURE_OFFSET(gcmd)
         self._move_to_center()
-        self.calibrated_z_offset = neg(offset_total / self.offset_samples) # TODO: Investigate this math to understand why the negation is needed.
+        average_offset = offset_total / self.offset_samples
+        self.calibrated_z_offset = average_offset * -1.0  # Invert the offset for Klipper's gcode offset convention
 
         # Apply calibrated offset and write to config
         self.cmd_AUTO_Z_LOAD_OFFSET(gcmd)
