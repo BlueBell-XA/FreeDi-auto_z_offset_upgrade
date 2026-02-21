@@ -68,6 +68,53 @@ def _get_probe_xy_offsets(probe_obj):
 
 
 # ---------------------------------------------------------------------------
+# Z stepper current helper
+# ---------------------------------------------------------------------------
+class ZStepperCurrentHelper:
+    """Printer-agnostic helper for temporarily reducing Z stepper motor currents.
+
+    Discovers all TMC-driven Z steppers at init time (works with any TMC model)
+    and provides methods to reduce and restore their run_current values.
+    """
+    def __init__(self, config, probe_current_factor=0.5):
+        self.printer = config.get_printer()
+        self.gcode = self.printer.lookup_object("gcode")
+        self.probe_current_factor = probe_current_factor
+        # Populated once the printer is ready and TMC objects are registered
+        self._z_steppers = {}   # {stepper_name: tmc_object}
+        self._saved_currents = {}  # {stepper_name: run_current}
+        self.printer.register_event_handler("klippy:ready", self._handle_ready)
+
+    def _handle_ready(self):
+        """Discover all TMC-driven Z steppers and cache their default run_current."""
+        for name, obj in self.printer.lookup_objects():
+            parts = name.split()
+            if (len(parts) == 2
+                    and parts[0].startswith('tmc')
+                    and parts[1].startswith('stepper_z')):
+                stepper_name = parts[1]
+                self._z_steppers[stepper_name] = obj
+                run_current = obj.get_status(None).get('run_current', None)
+                if run_current is not None:
+                    self._saved_currents[stepper_name] = run_current
+
+    def reduce(self):
+        """Reduce all Z stepper run_currents by the configured factor."""
+        for stepper_name, nominal in self._saved_currents.items():
+            reduced = nominal * self.probe_current_factor
+            self.gcode.run_script_from_command(
+                "SET_TMC_CURRENT STEPPER=%s CURRENT=%.3f" % (stepper_name, reduced)
+            )
+
+    def restore(self):
+        """Restore all Z stepper run_currents to their original values."""
+        for stepper_name, nominal in self._saved_currents.items():
+            self.gcode.run_script_from_command(
+                "SET_TMC_CURRENT STEPPER=%s CURRENT=%.3f" % (stepper_name, nominal)
+            )
+
+
+# ---------------------------------------------------------------------------
 # Main implementation - Modified from Joe's original source: https://github.com/frap129/qidi_auto_z_offset/blob/main/auto_z_offset.py
 # ---------------------------------------------------------------------------
 class AutoZOffsetCommandHelper:
@@ -86,6 +133,8 @@ class AutoZOffsetCommandHelper:
         # Derive bed center from stepper config
         self.bed_center_x = config.getsection('stepper_x').getfloat('position_max', note_valid=False) / 2.0
         self.bed_center_y = config.getsection('stepper_y').getfloat('position_max', note_valid=False) / 2.0
+        # Z stepper current management (reduces current during bed-sensor probing)
+        self.z_current_helper = ZStepperCurrentHelper(config, probe_current_factor=0.4)
         # Probe command data
         self.last_probe_position = self._make_coord(0., 0., 0.)
         self.last_z_result = 0.0
@@ -193,11 +242,15 @@ class AutoZOffsetCommandHelper:
 
     def cmd_AUTO_Z_PROBE(self, gcmd):
         """Probe Z-height at current XY position using the bed sensors"""
-        pos = probe.run_single_probe(self.mcu_probe, gcmd)
+        self.z_current_helper.reduce()
+        try:
+            pos = probe.run_single_probe(self.mcu_probe, gcmd)
+        finally:
+            self.z_current_helper.restore()
         x, y, z = _get_pos_xyz(pos)
         self.last_z_result = z + self.z_offset
         self.last_probe_position = self._make_coord(x, y, z)
-        gcmd.respond_info("%s: Bed sensor measured offset: z=%.6f" % (self.name, self.last_z_result))
+        gcmd.respond_info("%s: Bed sensor measured offset: z=%.6f" % (self.name, self.last_z_result*-1.0))
 
     def cmd_AUTO_Z_HOME_Z(self, gcmd):
         """Home Z using the bed sensors as an endstop, then apply z_offset config to set the new Z=0 plane."""
@@ -301,7 +354,7 @@ class AutoZOffsetEndstopWrapper:
         self.probe_wrapper = probe.ProbeEndstopWrapper(config)
         # Setup prepare_gcode
         gcode_macro = self.printer.load_object(config, "gcode_macro")
-        self.prepare_gcode = gcode_macro.load_template(config, "prepare_gcode")
+        self.prepare_gcode = gcode_macro.load_template(config, "prepare_gcode") #TODO: I don't want this running between every loop in Calibrate.
         # Wrappers
         self.get_mcu = self.probe_wrapper.get_mcu
         self.add_stepper = self.probe_wrapper.add_stepper
