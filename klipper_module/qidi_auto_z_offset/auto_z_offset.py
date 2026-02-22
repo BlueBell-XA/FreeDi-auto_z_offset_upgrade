@@ -83,6 +83,8 @@ class ZStepperCurrentHelper:
         # Populated once the printer is ready and TMC objects are registered
         self._z_steppers = {}   # {stepper_name: tmc_object}
         self._saved_currents = {}  # {stepper_name: run_current}
+        self._is_reduced = False  # Tracks whether current is currently reduced
+        self._hold = False         # When True, restore() becomes a no-op (held by outer loop)
         self.printer.register_event_handler("klippy:ready", self._handle_ready)
 
     def _handle_ready(self):
@@ -99,19 +101,27 @@ class ZStepperCurrentHelper:
                     self._saved_currents[stepper_name] = run_current
 
     def reduce(self):
-        """Reduce all Z stepper run_currents by the configured factor."""
+        """Reduce all Z stepper run_currents by the configured factor.
+        No-op if already reduced (i.e. managed by an outer calibration loop)."""
+        if self._is_reduced:
+            return
         for stepper_name, nominal in self._saved_currents.items():
             reduced = nominal * self.probe_current_factor
             self.gcode.run_script_from_command(
                 "SET_TMC_CURRENT STEPPER=%s CURRENT=%.3f" % (stepper_name, reduced)
             )
+        self._is_reduced = True
 
     def restore(self):
-        """Restore all Z stepper run_currents to their original values."""
+        """Restore all Z stepper run_currents to their original values.
+        No-op if held by an outer calibration loop (skip_restore is set)."""
+        if not self._is_reduced or self._hold:
+            return
         for stepper_name, nominal in self._saved_currents.items():
             self.gcode.run_script_from_command(
                 "SET_TMC_CURRENT STEPPER=%s CURRENT=%.3f" % (stepper_name, nominal)
             )
+        self._is_reduced = False
 
 
 # ---------------------------------------------------------------------------
@@ -119,9 +129,10 @@ class ZStepperCurrentHelper:
 # ---------------------------------------------------------------------------
 class AutoZOffsetCommandHelper:
     """Auto Z-Offset G-code commands for probing and calibration."""
-    def __init__(self, config, mcu_probe):
+    def __init__(self, config, mcu_probe, endstop_wrapper):
         self.printer = config.get_printer()
         self.mcu_probe = mcu_probe
+        self.endstop_wrapper = endstop_wrapper
         self.name = config.get_name()
         self.gcode = self.printer.lookup_object("gcode")
         self.xy_move_speed = 50 # mm/s, for moving to bed center and probe XY compensation moves
@@ -134,7 +145,7 @@ class AutoZOffsetCommandHelper:
         self.bed_center_x = config.getsection('stepper_x').getfloat('position_max', note_valid=False) / 2.0
         self.bed_center_y = config.getsection('stepper_y').getfloat('position_max', note_valid=False) / 2.0
         # Z stepper current management (reduces current during bed-sensor probing)
-        self.z_current_helper = ZStepperCurrentHelper(config, probe_current_factor=0.4)
+        self.z_current_helper = ZStepperCurrentHelper(config, probe_current_factor=0.33)
         # Probe command data
         self.last_probe_position = self._make_coord(0., 0., 0.)
         self.last_z_result = 0.0
@@ -282,7 +293,7 @@ class AutoZOffsetCommandHelper:
         position = probe.run_single_probe(inductive_probe, gcmd)
         inductive_probe_result_z = _get_pos_z(position)
         true_offset = self.last_z_result - inductive_probe_result_z  # Subtract inductive probe measurement from bed sensor measurement
-        gcmd.respond_info("%s: Calculated true nozzle offset: z=%.6f" % (self.name, true_offset))
+        gcmd.respond_info("%s: Calculated true nozzle offset: z=%.6f" % (self.name, true_offset*-1.0))
         self._lift_probe(gcmd)
         return true_offset
 
@@ -291,9 +302,19 @@ class AutoZOffsetCommandHelper:
         offset_total = 0.0
         self.gcode.run_script_from_command("SET_GCODE_OFFSET Z=0 MOVE=0")   # Clear any existing offsets to ensure clean measurements
 
-        # Measure true offset multiple times and average to reduce noise.
-        for _ in range(self.offset_samples):
-            offset_total += self.cmd_AUTO_Z_MEASURE_OFFSET(gcmd)
+        # Run prepare_gcode and reduce Z current once for the entire calibration
+        self.endstop_wrapper.run_prepare_gcode()
+        self.endstop_wrapper.skip_prepare = True
+        self.z_current_helper.reduce()
+        self.z_current_helper._hold = True
+        try:
+            # Measure true offset multiple times and average to reduce noise.
+            for _ in range(self.offset_samples):
+                offset_total += self.cmd_AUTO_Z_MEASURE_OFFSET(gcmd)
+        finally:
+            self.z_current_helper._hold = False
+            self.z_current_helper.restore()
+            self.endstop_wrapper.skip_prepare = False
         self._move_to_center()
         average_offset = offset_total / self.offset_samples
         self.calibrated_z_offset = average_offset * -1.0  # Invert the offset for Klipper's gcode offset convention
@@ -354,7 +375,8 @@ class AutoZOffsetEndstopWrapper:
         self.probe_wrapper = probe.ProbeEndstopWrapper(config)
         # Setup prepare_gcode
         gcode_macro = self.printer.load_object(config, "gcode_macro")
-        self.prepare_gcode = gcode_macro.load_template(config, "prepare_gcode") #TODO: I don't want this running between every loop in Calibrate.
+        self.prepare_gcode = gcode_macro.load_template(config, "prepare_gcode")
+        self.skip_prepare = False  # When True, multi_probe_begin skips prepare_gcode
         # Wrappers
         self.get_mcu = self.probe_wrapper.get_mcu
         self.add_stepper = self.probe_wrapper.add_stepper
@@ -364,8 +386,13 @@ class AutoZOffsetEndstopWrapper:
         self.query_endstop = self.probe_wrapper.query_endstop
         self.multi_probe_end = self.probe_wrapper.multi_probe_end
 
-    def multi_probe_begin(self):
+    def run_prepare_gcode(self):
+        """Explicitly run the prepare_gcode template."""
         self.gcode.run_script_from_command(self.prepare_gcode.render())
+
+    def multi_probe_begin(self):
+        if not self.skip_prepare:
+            self.run_prepare_gcode()
         self.probe_wrapper.multi_probe_begin()
 
     def probe_prepare(self, hmove):
@@ -471,7 +498,7 @@ class AutoZOffsetProbe:
     def __init__(self, config):
         self.printer = config.get_printer()
         self.mcu_probe = AutoZOffsetEndstopWrapper(config)
-        self.cmd_helper = AutoZOffsetCommandHelper(config, self)
+        self.cmd_helper = AutoZOffsetCommandHelper(config, self, self.mcu_probe)
         self.probe_offsets = AutoZOffsetOffsetsHelper(config)
         self.param_helper = AutoZOffsetParameterHelper(config)
         self.homing_helper = HomingViaAutoZHelper(
