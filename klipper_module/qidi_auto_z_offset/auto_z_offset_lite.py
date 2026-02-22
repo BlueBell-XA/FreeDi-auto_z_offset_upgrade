@@ -1,23 +1,31 @@
-# Minimal QIDI Auto Z-Offset — toolhead-position-based calibration
+# QIDI Auto Z-Offset — Remastered
 #
 # Copyright (C) 2026  Nicholas Coe (BlueBell-XA)
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 #
+# Credit goes to Joe Maples for the original Auto Z-Offset module, which inspired this rewrite.
+# https://github.com/frap129/qidi_auto_z_offset/blob/main/auto_z_offset.py
+#
 # How it works:
 #   1. Probe the bed with the bed sensor → read toolhead Z (raw trigger height)
 #   2. Probe the bed with the inductive probe (via PROBE gcode) → read toolhead Z
 #   3. Difference = true nozzle offset from the inductive probe's trigger plane
-#   4. Average multiple runs, invert for Klipper gcode offset convention, save
+#   4. Average multiple runs, add in an air-gap offset, and save result
 #
-# No probe results or z_offset arithmetic involved — just raw kinematic positions.
+# No probe results or z_offset arithmetic involve.
+# Inheritance minimised to avoid breakage when Klipper internals change.
 
 
 # ---------------------------------------------------------------------------
 # Z stepper current helper
 # ---------------------------------------------------------------------------
 class ZStepperCurrentHelper:
-    """Discover TMC Z steppers at runtime and temporarily reduce their current."""
+    """Printer-agnostic helper for temporarily reducing Z stepper motor currents.
+
+    Discovers all TMC-driven Z steppers at init time (works with any TMC model)
+    and provides methods to reduce and restore their run_current values.
+    """
     def __init__(self, config, factor=0.33):
         self.printer = config.get_printer()
         self.gcode = self.printer.lookup_object('gcode')
@@ -28,6 +36,7 @@ class ZStepperCurrentHelper:
         self.printer.register_event_handler('klippy:ready', self._on_ready)
 
     def _on_ready(self):
+        """Discover all TMC-driven Z steppers and cache their default run_current."""
         for name, obj in self.printer.lookup_objects():
             parts = name.split()
             if (len(parts) == 2
@@ -38,6 +47,7 @@ class ZStepperCurrentHelper:
                     self._saved[parts[1]] = cur
 
     def reduce(self):
+        """Reduce all Z stepper run_currents by the configured factor."""
         if self._is_reduced:
             return
         for name, cur in self._saved.items():
@@ -46,6 +56,7 @@ class ZStepperCurrentHelper:
         self._is_reduced = True
 
     def restore(self):
+        """Restore all Z stepper run_currents to their original values."""
         if not self._is_reduced or self._hold:
             return
         for name, cur in self._saved.items():
