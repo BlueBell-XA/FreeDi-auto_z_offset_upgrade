@@ -46,6 +46,9 @@ Add `AUTO_Z_LOAD_OFFSET` to your `PRINT_START` macro to apply the saved offset e
 
 ## Config Reference
 
+> [!WARNING]
+> Setting `z_current_factor` too low or `speed` too high can cause the Z stepper motors to skip steps — particularly on the retract move after probing. If you hear grinding or notice Z position drift, increase `z_current_factor` or reduce `speed`.
+
 ```ini
 [auto_z_offset]
 pin:
@@ -64,10 +67,12 @@ prepare_gcode:
 
 #speed: 5.0
 #   Speed (mm/s) for downward probing moves (both bed sensor and inductive).
+#   Must be greater than 0.
 #   Default: 5.0
 
 #lift_speed: 20.0
 #   Speed (mm/s) for upward retract/lift moves.
+#   Must be greater than 0.
 #   Default: 20.0
 
 #probe_hop: 4.0
@@ -101,7 +106,7 @@ prepare_gcode:
 
 #sample_retract_dist: 3.0
 #   Distance (mm) to retract between individual samples (when samples > 1).
-#   This is distinct from probe_hop.
+#   This is distinct from probe_hop. Minimum: 1.0
 #   Default: 3.0
 
 #samples_result: average
@@ -120,12 +125,12 @@ prepare_gcode:
 #   0 = error immediately on first tolerance failure.
 #   Default: 0
 
-#z_current_factor: 0.33
-#   Factor (0.1–1.0) to multiply Z stepper motor run_current by during
+#z_current_factor: 0.6
+#   Factor (0.3–1.0) to multiply Z stepper motor run_current by during
 #   bed-sensor probing. Lower values make the probe more sensitive but
 #   risk skipped steps on the retract. Automatically discovers all
 #   TMC-driven Z steppers.
-#   Default: 0.33
+#   Default: 0.6
 
 #probe_z_correction: 0.0
 #   The stored probe Z correction. This is the difference between where the
@@ -188,19 +193,3 @@ prepare_gcode:
     G90
     SET_PIN PIN=bed_sensor VALUE=1
 ```
-
-## Key Differences from the Original
-
-| Aspect | Original (`auto_z_offset.py`) | Remastered (`auto_z_offset.py`) |
-|---|---|---|
-| Klipper probe dependency | Inherits `ProbeEndstopWrapper`, `HomingViaProbeHelper`, `ProbeSessionHelper`, `ProbeParameterHelper` | None — uses `pins.setup_pin('endstop', ...)` and `homing.probing_move()` directly |
-| Probe result handling | Uses Klipper's `ProbeResult` / position tuples with `z_offset` subtraction | Reads `toolhead.get_position()[2]` directly — no probe result objects |
-| Z virtual endstop | Registers `auto_z_offset:z_virtual_endstop` chip | Not needed — bed sensor endstop is used only for probing, not homing rails |
-| Compatibility | Breaks when Klipper changes probe internals (e.g. old→new `ProbeResult` format) | Resilient — only depends on stable Klipper primitives (`homing`, `pins`, `toolhead`) |
-| New config options | — | `lift_speed`, `z_current_factor`, `probe_z_min` |
-| Safety | Relies on `position_min` only | Pre-flight endstop query, hard -10 mm floor clamp, descriptive error messages |
-
-## Credits
-
-- **Joe** — original `auto_z_offset` concept ([frap129/qidi_auto_z_offset](https://github.com/frap129/qidi_auto_z_offset))
-- **Nicholas (BlueBell-XA)** — remastered implementation
