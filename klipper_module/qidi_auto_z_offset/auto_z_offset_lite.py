@@ -130,7 +130,6 @@ class AutoZOffset:
         z_current_factor = config.getfloat(
             'z_current_factor', 0.33, minval=0.1, maxval=1.0)
         self.z_current = ZStepperCurrentHelper(config, factor=z_current_factor)
-        self.last_bed_z = 0.
 
         # ---- Inductive probe XY offsets (resolved at ready time) ----------
         self._ind_x_off = 0.
@@ -274,14 +273,13 @@ class AutoZOffset:
         finally:
             if old_accel is not None:
                 self.gcode.run_script_from_command('M204 S%.3f' % old_accel)
+        self.gcode.run_script_from_command('M400')
         return self._get_z()
 
     def _probe_inductive(self):
         """Fire inductive probe via PROBE gcode and return raw trigger Z."""
-        self.gcode.run_script_from_command(
-            'PROBE SAMPLES=1 SPEED=%.3f LIFT_SPEED=%.3f'
-            ' SAMPLE_RETRACT_DIST=%.3f'
-            % (self.probe_speed, self.lift_speed, self.sample_retract_dist))
+        self.gcode.run_script_from_command('PROBE SAMPLES=1 SPEED=%.3f' % (self.probe_speed))
+        self.gcode.run_script_from_command('M400')
         return self._get_z()
 
     # ---- Multi-sample helpers ---------------------------------------------
@@ -336,16 +334,17 @@ class AutoZOffset:
 
     # ---- G-code commands --------------------------------------------------
     def cmd_probe(self, gcmd):
-        """Probe with bed sensor and record raw trigger Z."""
+        """Probe with bed sensor and return raw trigger Z."""
         if not self._skip_prepare:
             self.gcode.run_script_from_command(self.prepare_gcode.render())
         self.z_current.reduce()
         try:
-            self.last_bed_z = self._multi_sample(self._probe_bed_sensor)
+            bed_z = self._multi_sample(self._probe_bed_sensor)
         finally:
             self.z_current.restore()
         gcmd.respond_info('%s: bed sensor trigger Z: %.6f'
-                         % (self.name, self.last_bed_z))
+                         % (self.name, bed_z))
+        return bed_z
 
     def cmd_home_z(self, gcmd):
         """Home Z using bed sensor, then set Z=z_offset (small air-gap)."""
@@ -359,10 +358,9 @@ class AutoZOffset:
 
     def cmd_measure_offset(self, gcmd):
         """Probe with both sensors and return the raw Z difference."""
-        # Ensure no stale gcode Z offset contaminates the readings
-        self.gcode.run_script_from_command('SET_GCODE_OFFSET Z=0 MOVE=0')
+        # self.gcode.run_script_from_command('SET_GCODE_OFFSET Z=0 MOVE=0')
         self._move_to_center()
-        self.cmd_probe(gcmd)
+        bed_z = self.cmd_probe(gcmd)
         self._lift()
 
         # Move inductive probe over the same XY
@@ -372,11 +370,11 @@ class AutoZOffset:
         self._move(coord, self.xy_speed)
 
         inductive_z = self._multi_sample(self._probe_inductive)
-        offset = self.last_bed_z - inductive_z + self.z_offset
+        offset = bed_z - inductive_z + self.z_offset
         gcmd.respond_info(
             '%s: true nozzle offset: %.6f  (bed_z=%.6f, inductive_z=%.6f,'
             ' air_gap=%.6f)'
-            % (self.name, offset, self.last_bed_z, inductive_z, self.z_offset))
+            % (self.name, offset, bed_z, inductive_z, self.z_offset))
         self._lift()
         self._move_to_center()
         return offset
@@ -429,8 +427,7 @@ class AutoZOffset:
             % (self.name, self.calibrated_z_offset))
 
     def get_status(self, eventtime):
-        return {'last_bed_z': self.last_bed_z,
-                'calibrated_z_offset': self.calibrated_z_offset}
+        return {'calibrated_z_offset': self.calibrated_z_offset}
 
 
 def load_config(config):
