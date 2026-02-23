@@ -32,6 +32,10 @@ sudo service klipper restart
 6. Go to your web-ui and `printer.cfg`. Comment out the old [auto_z_offset] section, and create a new one with the new (example at end of readme). Save and restart.
 7. See the Calibration section to test it out.
 
+### Feedback
+For any issues or bugs identified, please raise them here: https://github.com/BlueBell-XA/FreeDi-auto_z_offset_upgrade/issues
+For any general comments, feel free to message me on the FreeDi discord group - @BlueBell-XA
+
 ### Reverting the changes
 Go to your update manager within the web-ui then **check for updates**. The FreeDi repo should be reported as **DIRTY**, allowing you to perform a soft recovery on it. Don't forget to revert your `printer.cfg`
 
