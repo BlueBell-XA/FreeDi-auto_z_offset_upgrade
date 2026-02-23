@@ -3,7 +3,15 @@
 A Klipper plugin that uses the piezo-electric bed sensors found on QIDI printers to automatically determine the Z-offset correction needed for the inductive probe — compensating for the difference between where the probe thinks the bed is and where it actually is.
 
 > [!IMPORTANT]
-> This is a ground-up rewrite of the original `auto_z_offset` module. It does **not** inherit from Klipper's `probe.py`, making it resilient to upstream Klipper API changes. It is designed as a drop-in replacement — the same G-code commands and config section name are used.
+> This is a ground-up rewrite of the original `auto_z_offset` module. It does **not** inherit from Klipper's `probe.py`, making it resilient to upstream Klipper API changes. It is designed as a drop-in replacement — the same G-code commands and config section name are used. With that said, it is ready for testing. See below for the instructions to try out this version.
+
+## Installation & Testing
+
+1. SSH into your printer.
+2. Remove the original auto_z_offset.py:
+`tbc`
+`tbc`
+
 
 ## How It Works
 
