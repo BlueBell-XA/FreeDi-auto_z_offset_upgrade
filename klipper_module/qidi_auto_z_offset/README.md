@@ -9,8 +9,31 @@ A Klipper plugin that uses the piezo-electric bed sensors found on QIDI printers
 
 1. SSH into your printer.
 2. Remove the original auto_z_offset.py:
-`tbc`
-`tbc`
+```bash
+cd ~/FreeDi/klipper_module/qidi_auto_z_offset
+```
+
+```bash
+rm auto_z_offset.py
+```
+
+3. Copy all the code from auto_z_offset.py within this repo, then paste it in nano:
+```bash
+nano auto_z_offset.py
+```
+
+Right click in the window to paste all the code. Then `ctrl + o`, then `enter`, then `ctrl + x` to save and exit nano.
+
+4. Restart Klipper:
+```bash
+sudo service klipper restart
+```
+
+6. Go to your web-ui and `printer.cfg`. Comment out the old [auto_z_offset] section, and create a new one with the new (example at end of readme). Save and restart.
+7. See the Calibration section to test it out.
+
+### Reverting the changes
+Go to your update manager within the web-ui then **check for updates**. The FreeDi repo should be reported as **DIRTY**, allowing you to perform a soft recovery on it. Don't forget to revert your `printer.cfg`
 
 
 ## How It Works
