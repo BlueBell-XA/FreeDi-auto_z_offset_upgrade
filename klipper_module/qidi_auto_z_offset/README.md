@@ -404,33 +404,34 @@ value: 0
 # ---- Inductive probe ----
 # Standard Klipper probe section. The module reads offsets from here.
 [probe]
-pin: !gpio21
-x_offset: 17.6
-y_offset: 4.4
-z_offset: 0.0
-speed: 10
-samples: 3
+pin: ^!Toolhead:PA10
+x_offset: 25
+y_offset: 1.3
+z_offset: 1.0
+speed: 5
+samples: 1
 samples_result: average
-sample_retract_dist: 4.0
-samples_tolerance: 0.05
+sample_retract_dist: 7.0
+lift_speed: 40
+samples_tolerance: 0.02
 samples_tolerance_retries: 5
 
 # ---- Auto Z-Offset ----
 [auto_z_offset]
 pin: PC1                # Bed sensor SIGNAL pin (endstop input, NOT the power pin)
 z_offset: 0.2
-speed: 5
-lift_speed: 20
-probe_accel: 50
-probe_hop: 10
+z_current_factor: 0.6
 probe_z_min: -2
-offset_samples: 4
-samples: 1
+probe_hop: 4
+offset_samples: 3
+probe_accel: 50
+speed: 5
+lift_speed: 12
+samples: 2
 sample_retract_dist: 5
 samples_result: average
 samples_tolerance: 0.025
 samples_tolerance_retries: 1
-z_current_factor: 0.33
 prepare_gcode:
     G90
     G0 Z3
