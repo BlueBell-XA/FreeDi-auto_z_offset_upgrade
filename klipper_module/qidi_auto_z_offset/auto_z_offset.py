@@ -82,7 +82,7 @@ class AutoZOffset:
         self.lift_speed = config.getfloat('lift_speed', 20., above=0.)
         self.probe_accel = config.getfloat('probe_accel', 0.0, minval=0.0)
         self.offset_samples = config.getint('offset_samples', 3, minval=1)
-        self.calibrated_z_offset = config.getfloat('calibrated_z_offset', 0.0)
+        self.probe_z_correction = config.getfloat('probe_z_correction', 0.0)
         self.xy_speed = 75.
 
         # Per-point sampling
@@ -139,7 +139,7 @@ class AutoZOffset:
             ('AUTO_Z_HOME_Z',           self.cmd_home_z,         'Home Z via bed sensor'),
             ('AUTO_Z_MEASURE_OFFSET',   self.cmd_measure_offset, 'Measure true nozzle Z-offset'),
             ('AUTO_Z_CALIBRATE',        self.cmd_calibrate,      'Multi-sample calibration'),
-            ('AUTO_Z_LOAD_OFFSET',      self.cmd_load_offset,    'Apply saved calibrated_z_offset'),
+            ('AUTO_Z_LOAD_OFFSET',      self.cmd_load_offset,    'Apply saved probe_z_correction'),
             ('AUTO_Z_SAVE_GCODE_OFFSET',self.cmd_save_offset,    'Save current gcode Z-offset'),
         ]:
             self.gcode.register_command(cmd, handler, desc=desc)
@@ -421,36 +421,36 @@ class AutoZOffset:
 
         self._move_to_center()
         result = self._calc_result(offsets)
-        self.calibrated_z_offset = result
+        self.probe_z_correction = result
         self.cmd_load_offset(gcmd)
         self._store(gcmd)
 
     def cmd_load_offset(self, gcmd):
-        """Apply calibrated_z_offset as a gcode Z offset."""
+        """Apply probe_z_correction as a gcode Z offset."""
         self.gcode.run_script_from_command(
-            'SET_GCODE_OFFSET Z=%f MOVE=0' % self.calibrated_z_offset)
-        gcmd.respond_info('%s: applied calibrated_z_offset: %.6f'
-                         % (self.name, self.calibrated_z_offset))
+            'SET_GCODE_OFFSET Z=%f MOVE=0' % self.probe_z_correction)
+        gcmd.respond_info('%s: applied probe_z_correction: %.6f'
+                         % (self.name, self.probe_z_correction))
 
     def cmd_save_offset(self, gcmd):
         """Save the current gcode Z offset (e.g. after baby-stepping)."""
         gcode_move = self.printer.lookup_object('gcode_move')
-        self.calibrated_z_offset = gcode_move.homing_position[2]
+        self.probe_z_correction = gcode_move.homing_position[2]
         self._store(gcmd)
 
     # ---- Persistence ------------------------------------------------------
     def _store(self, gcmd):
         configfile = self.printer.lookup_object('configfile')
-        configfile.set(self.name, 'calibrated_z_offset',
-                       '%.6f' % self.calibrated_z_offset)
+        configfile.set(self.name, 'probe_z_correction',
+                       '%.6f' % self.probe_z_correction)
         gcmd.respond_info(
-            '%s: calibrated_z_offset: %.6f\n'
+            '%s: probe_z_correction: %.6f\n'
             'The SAVE_CONFIG command will update the printer config file\n'
             'with the above and restart the printer.'
-            % (self.name, self.calibrated_z_offset))
+            % (self.name, self.probe_z_correction))
 
     def get_status(self, eventtime):
-        return {'calibrated_z_offset': self.calibrated_z_offset}
+        return {'probe_z_correction': self.probe_z_correction}
 
 
 def load_config(config):
