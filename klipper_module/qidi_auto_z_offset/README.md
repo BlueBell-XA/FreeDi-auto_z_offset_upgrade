@@ -1,6 +1,6 @@
-# Auto Z-Offset — Remastered (Lite)
+# Auto Z-Offset — Remastered
 
-A Klipper plugin that uses the piezo-electric bed sensors found on QIDI printers to automatically determine the true nozzle Z-offset relative to the inductive probe's trigger plane.
+A Klipper plugin that uses the piezo-electric bed sensors found on QIDI printers to automatically determine the Z-offset correction needed for the inductive probe — compensating for the difference between where the probe thinks the bed is and where it actually is.
 
 > [!IMPORTANT]
 > This is a ground-up rewrite of the original `auto_z_offset` module. It does **not** inherit from Klipper's `probe.py`, making it resilient to upstream Klipper API changes. It is designed as a drop-in replacement — the same G-code commands and config section name are used.
@@ -9,9 +9,9 @@ A Klipper plugin that uses the piezo-electric bed sensors found on QIDI printers
 
 1. **Probe the bed with the bed sensor** — the nozzle descends until the piezo bed sensor triggers. The raw toolhead Z position at the trigger point is recorded.
 2. **Probe the bed with the inductive probe** — the toolhead repositions so the inductive probe is over bed center, then runs a standard `PROBE` command. The raw toolhead Z position is recorded.
-3. **Calculate the offset** — the difference between the two Z readings, plus a configurable air-gap (`z_offset`), gives the true nozzle offset from the inductive probe's reference plane.
+3. **Calculate the correction** — the difference between the two Z readings, plus a configurable air-gap (`z_offset`), gives the error in the inductive probe's reference plane — i.e. how far off the probe's Z-offset is from reality.
 4. **Average / median multiple runs** — when calibrating, multiple measure cycles are performed and reduced using the configured method to minimise noise.
-5. **Save & apply** — the result is stored as `calibrated_z_offset` and applied as a G-code Z offset.
+5. **Save & apply** — the result is stored as `probe_z_correction` and applied as a G-code Z offset to compensate for the probe's error.
 
 No probe result objects, `z_offset` arithmetic from Klipper's probe infrastructure, or class inheritance are involved. The module reads the toolhead position directly after each probe event.
 
@@ -22,9 +22,9 @@ No probe result objects, `z_offset` arithmetic from Klipper's probe infrastructu
 | `AUTO_Z_PROBE` | Probe Z-height at the current XY position using the bed sensors. Returns the raw trigger Z. |
 | `AUTO_Z_HOME_Z` | Move to bed center, probe with the bed sensor, then reset the Z coordinate frame so the trigger point becomes `z_offset`. Lifts afterward. |
 | `AUTO_Z_MEASURE_OFFSET` | Perform a full measurement cycle: bed-sensor probe → lift → inductive probe → compute offset. Returns the calculated offset. |
-| `AUTO_Z_CALIBRATE` | Run `AUTO_Z_MEASURE_OFFSET` multiple times (`offset_samples`), reduce the results (average/median), apply and save the calibrated offset. |
-| `AUTO_Z_LOAD_OFFSET` | Apply the `calibrated_z_offset` stored in the config as a G-code Z offset. |
-| `AUTO_Z_SAVE_GCODE_OFFSET` | Save the current live G-code Z offset (e.g. after baby-stepping) as the new `calibrated_z_offset`. |
+| `AUTO_Z_CALIBRATE` | Run `AUTO_Z_MEASURE_OFFSET` multiple times (`offset_samples`), reduce the results (average/median), apply and save the probe Z correction. |
+| `AUTO_Z_LOAD_OFFSET` | Apply the saved `probe_z_correction` as a G-code Z offset. |
+| `AUTO_Z_SAVE_GCODE_OFFSET` | Save the current live G-code Z offset (e.g. after baby-stepping) as the new `probe_z_correction`. |
 
 ## Basic Usage
 
@@ -127,15 +127,11 @@ prepare_gcode:
 #   TMC-driven Z steppers.
 #   Default: 0.33
 
-#invert_calibrated_offset: True
-#   When True, the calculated offset is negated before storing and applying.
-#   This is correct for most QIDI printers. Set to False if the applied
-#   offset drives the nozzle the wrong direction.
-#   Default: True
-
-#calibrated_z_offset: 0.0
-#   The stored calibration result. Written automatically by AUTO_Z_CALIBRATE
-#   and AUTO_Z_SAVE_GCODE_OFFSET. Do not edit manually unless you know what
+#probe_z_correction: 0.0
+#   The stored probe Z correction. This is the difference between where the
+#   inductive probe thinks the bed is and where it actually is, as measured
+#   by the bed sensor. Written automatically by AUTO_Z_CALIBRATE and
+#   AUTO_Z_SAVE_GCODE_OFFSET. Do not edit manually unless you know what
 #   you are doing.
 #   Default: 0.0
 ```
@@ -176,7 +172,6 @@ samples_result: average
 samples_tolerance: 0.025
 samples_tolerance_retries: 1
 z_current_factor: 0.33
-invert_calibrated_offset: True
 prepare_gcode:
     G90
     G0 Z3
@@ -196,16 +191,16 @@ prepare_gcode:
 
 ## Key Differences from the Original
 
-| Aspect | Original (`auto_z_offset.py`) | Remastered (`auto_z_offset_lite.py`) |
+| Aspect | Original (`auto_z_offset.py`) | Remastered (`auto_z_offset.py`) |
 |---|---|---|
 | Klipper probe dependency | Inherits `ProbeEndstopWrapper`, `HomingViaProbeHelper`, `ProbeSessionHelper`, `ProbeParameterHelper` | None — uses `pins.setup_pin('endstop', ...)` and `homing.probing_move()` directly |
 | Probe result handling | Uses Klipper's `ProbeResult` / position tuples with `z_offset` subtraction | Reads `toolhead.get_position()[2]` directly — no probe result objects |
 | Z virtual endstop | Registers `auto_z_offset:z_virtual_endstop` chip | Not needed — bed sensor endstop is used only for probing, not homing rails |
 | Compatibility | Breaks when Klipper changes probe internals (e.g. old→new `ProbeResult` format) | Resilient — only depends on stable Klipper primitives (`homing`, `pins`, `toolhead`) |
-| New config options | — | `lift_speed`, `z_current_factor`, `invert_calibrated_offset`, `probe_z_min` |
+| New config options | — | `lift_speed`, `z_current_factor`, `probe_z_min` |
 | Safety | Relies on `position_min` only | Pre-flight endstop query, hard -10 mm floor clamp, descriptive error messages |
 
 ## Credits
 
-- **Joe Maples** — original `auto_z_offset` concept ([frap129/qidi_auto_z_offset](https://github.com/frap129/qidi_auto_z_offset))
-- **Nicholas Coe (BlueBell-XA)** — remastered implementation
+- **Joe** — original `auto_z_offset` concept ([frap129/qidi_auto_z_offset](https://github.com/frap129/qidi_auto_z_offset))
+- **Nicholas (BlueBell-XA)** — remastered implementation
