@@ -15,7 +15,8 @@
 #   4. Difference = the correction needed (error in the probe's z_offset).
 #   5. Average multiple runs and save result as a gcode Z-offset.
 #
-# Inheritance minimised to avoid breakage when Klipper internals change.
+# No inheritance from Klipper's probe infrastructure, avoiding breakage
+# when Klipper internals change.
 
 
 # ---------------------------------------------------------------------------
@@ -24,8 +25,8 @@
 class ZStepperCurrentHelper:
     """Printer-agnostic helper for temporarily reducing Z stepper motor currents.
 
-    Discovers all TMC-driven Z steppers at init time (works with any TMC model)
-    and provides methods to reduce and restore their run_current values.
+    Discovers all TMC-driven Z steppers at ready time (works with any TMC
+    model) and provides methods to reduce and restore their run_current values.
     """
     def __init__(self, config, factor=0.33):
         self.printer = config.get_printer()
@@ -118,7 +119,7 @@ class AutoZOffset:
         self.printer.register_event_handler(
             'klippy:mcu_identify', self._attach_z_steppers)
 
-        # ---- Prepare gcode (runs once before bed-sensor probing) ----------
+        # ---- Prepare gcode (runs before each bed-sensor probe sequence) ---
         gcode_macro = self.printer.load_object(config, 'gcode_macro')
         self.prepare_gcode = gcode_macro.load_template(config, 'prepare_gcode')
         self._skip_prepare = False
@@ -383,14 +384,14 @@ class AutoZOffset:
 
         inductive_z = self._multi_sample(self._probe_inductive)
 
-        # bed_z is where the bed sensor triggered — the nozzle is still
-        # z_offset (air gap) above the true bed surface at that point.
-        # Subtract z_offset to get the true bed-surface Z.
+        # bed_z is where the bed sensor triggered.  z_offset is an air-gap
+        # compensation constant: positive values raise the final offset
+        # (nozzle further from bed), negative values lower it.
         #
         # inductive_z has probe.z_offset baked in by G28 homing.
         # Subtract probe_z_off to cancel it, isolating only the error.
         #
-        # correction = (true bed surface) − (where homing thinks bed is)
+        # correction = bed_z − (inductive_z − probe_z_off) + z_offset
         probe_z_off = self._get_probe_z_offset()
         inductive_bed_z = inductive_z - probe_z_off
         correction = bed_z - inductive_bed_z + self.z_offset
@@ -404,7 +405,7 @@ class AutoZOffset:
         return correction
 
     def cmd_calibrate(self, gcmd):
-        """Average multiple offset measurements and save result."""
+        """Run multiple offset measurements, reduce (average/median), and save."""
         # Prepare / reduce current once for entire loop
         self.gcode.run_script_from_command(self.prepare_gcode.render())
         self._skip_prepare = True
