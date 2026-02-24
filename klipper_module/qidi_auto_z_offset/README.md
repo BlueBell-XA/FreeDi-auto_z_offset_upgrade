@@ -129,7 +129,7 @@ Before making any changes, save a copy of your current `printer.cfg` so you can 
    ```bash
    nano auto_z_offset.py
    ```
-   Right-click in the terminal window to paste the full contents of the new `auto_z_offset.py` from this repo. Then press `Ctrl + O`, `Enter` to save, and `Ctrl + X` to exit.
+   Right-click in the terminal window to paste the full contents of the new `auto_z_offset.py` from this repo. Then press `Ctrl + o`, `Enter` to save, and `Ctrl + x` to exit.
 
 > [!TIP]
 > Alternatively, you can use `wget` or `scp` to transfer the file directly if you prefer not to copy-paste.
@@ -178,6 +178,8 @@ After restarting, check the Klipper log for errors:
    ```
    Watch the printer closely and **be ready to test the bed sensor manually**:
    - After the `prepare_gcode` completes and the nozzle begins descending toward the bed, **quickly and forcefully tap the print bed with your finger**.
+     
+     **Note**, it's recommended to ensure the `prepare_gcode` starts at a higher Z height than usual, just to give ample time to test and react if required.
    - **If the bed retreats (or the nozzle rises)** — the bed sensor is working correctly. The tap simulated a trigger and the probe responded. Let the process continue.
    - **If nothing happens when you tap** — the bed sensor is not triggering. **Kill power immediately** before the nozzle crashes into the bed. Review your pin configuration (see [Understanding the Pin Configuration](#understanding-the-pin-configuration)).
    - If it errors with "bed sensor is already triggered" — the sensor is stuck on or the pin is inverted. Check wiring and pin polarity.
@@ -213,6 +215,19 @@ After calibration completes, you need to verify the offset is correct before pri
    AUTO_Z_SAVE_GCODE_OFFSET
    SAVE_CONFIG
    ```
+
+4. _[Optional]_: Adjust the **z_offset** (air-gap) value within the `[auto_z_offset]` config by the same amount you 'baby-stepped', then rerun the full calibration sequence and save the results.
+   Any future calibrations (requried if you change to a different build plate, or nozzle for example), would require you to perform the same baby-stepping adjustment. Provided your hardware returns consistent results,
+   future baby-stepping requirements can be negated by adjusting that 'air-gap' compensation. In a well performing machine, you should be able to achieve the same great first layer (after a quick calibration run), regardless of the bed surface or nozzle fitted.
+
+   E.g. You start with `z_offset = 0.2`, and run a calibration that returns a `probe_z_correction` of **-0.246**. You either perform the paper test or print a single layer, and find you need to baby step down **-0.05** to achieve a good first layer.
+   You __could__ then save this value (as described in Step 3), which would change the `probe_z_correction` to **-0.196**, and call it a day... but if you **Add** the baby-stepped value to your z_offset &rarr; `z_offset = 0.15`, then rerun your calibration,
+   you should see:
+   ```
+   #*# [auto_z_offset]
+   #*# probe_z_correction = -0.196
+   ```
+   With a machine that has a low deviation in sensor responses, making this adjustment theoretically means you won't have to perform baby-stepping again... just rerun the calibration if you change your physical hardware.
 
 ---
 
@@ -300,9 +315,14 @@ prepare_gcode:
 #   Required.
 
 #z_offset: 0.2
-#   Air-gap compensation added to every offset measurement. This is NOT the
-#   inductive probe's z_offset — it accounts for the small distance between
-#   the bed sensor trigger point and true bed contact.
+#   Slightly misleading name, retained to minimise friction when changing from
+#   the original auto_z_offset script to this version. This is NOT the
+#   inductive probe's z_offset, rather, an air-gap compensation added to every
+#   offset measurement. Setting this to zero would result in your nozzle physically
+#   touching the bed after calibration and setting Z=0. A paper-thickness gap should
+#   remain between the nozzle and bed after calibration to ensure a good first layer.
+#   If baby-stepping is required, its recommended to adjust this value and rerun
+#   calibration to ensure all future calibrations yield the same 'first layer squish'.
 #   Default: 0.2
 
 #speed: 5.0
@@ -434,7 +454,7 @@ samples_tolerance: 0.025
 samples_tolerance_retries: 1
 prepare_gcode:
     G90
-    G0 Z3
+    G0 Z10    # Recommended to change to `G0 Z50` for the first test for test users. Gives ample time to test force activation and shut down if required after preparation is complete.
     G91
     SET_PIN PIN=bed_sensor VALUE=0
     M400
@@ -443,7 +463,6 @@ prepare_gcode:
         G1 Z0.6 F7000
         G1 Z-0.6 F7000
     {% endfor %}
-    G1 Z3
     M400
     G90
     SET_PIN PIN=bed_sensor VALUE=1
