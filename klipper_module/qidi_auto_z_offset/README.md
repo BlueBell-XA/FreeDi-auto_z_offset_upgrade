@@ -221,11 +221,11 @@ After calibration completes, you need to verify the offset is correct before pri
    future baby-stepping requirements can be negated by adjusting that 'air-gap' compensation. In a well performing machine, you should be able to achieve the same great first layer (after a quick calibration run), regardless of the bed surface or nozzle fitted.
 
    E.g. You start with `z_offset = 0.2`, and run a calibration that returns a `probe_z_correction` of **-0.246**. You either perform the paper test or print a single layer, and find you need to baby step down **-0.05** to achieve a good first layer.
-   You __could__ then save this value (as described in Step 3), which would change the `probe_z_correction` to **-0.196**, and call it a day... but if you **Add** the baby-stepped value to your z_offset &rarr; `z_offset = 0.15`, then rerun your calibration,
+   You __could__ then save this value (as described in Step 3), which would change the `probe_z_correction` to **-0.296**, and call it a day... but if you **Add** the baby-stepped value to your z_offset &rarr; `z_offset = 0.15`, then rerun your calibration,
    you should see:
    ```
    #*# [auto_z_offset]
-   #*# probe_z_correction = -0.196
+   #*# probe_z_correction = -0.296
    ```
    With a machine that has a low deviation in sensor responses, making this adjustment theoretically means you won't have to perform baby-stepping again... just rerun the calibration if you change your physical hardware.
 
